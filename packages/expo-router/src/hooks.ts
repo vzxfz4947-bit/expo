@@ -42,12 +42,13 @@ const loaderPromiseCache = new Map<string, Promise<any>>();
  * ```
  */
 export function useLoader<T = any>(loader: LoaderFunction<T>): T {
-  const routePath = usePathname();
+  const pathname = usePathname();
+  const segments = useSegments();
   const loaderDataContext = React.useContext(LoaderContext);
 
   // This is used by the server at build time
-  if (loaderDataContext && routePath in loaderDataContext) {
-    return loaderDataContext[routePath];
+  if (loaderDataContext && pathname in loaderDataContext) {
+    return loaderDataContext[pathname];
   }
 
   if (typeof window !== 'undefined') {
@@ -59,36 +60,36 @@ export function useLoader<T = any>(loader: LoaderFunction<T>): T {
 
     // This is used when first loading a page in the browser as the preloaded data should be
     // available as a `<script>` tag in the HTML
-    const preloadedData = window.__EXPO_ROUTER_LOADER_DATA__[routePath];
+    const preloadedData = window.__EXPO_ROUTER_LOADER_DATA__[pathname];
     if (preloadedData !== undefined) {
       return preloadedData;
     }
 
     // If client-side navigation has already triggered a load for this route, we can re-use the data
-    if (loaderDataCache.has(routePath)) {
-      return loaderDataCache.get(routePath);
+    if (loaderDataCache.has(pathname)) {
+      return loaderDataCache.get(pathname);
     }
 
     // Check if a fetch is already in-progress for this route. This is to prevent duplicate network
     // requests when multiple requests for the same route data are received, but before the first
     // fetch has completed
-    if (!loaderPromiseCache.has(routePath)) {
-      const promise = fetchLoaderModule(routePath)
+    if (!loaderPromiseCache.has(pathname)) {
+      const promise = fetchLoaderModule(pathname, segments)
         .then((data) => {
-          loaderDataCache.set(routePath, data);
-          loaderPromiseCache.delete(routePath);
+          loaderDataCache.set(pathname, data);
+          loaderPromiseCache.delete(pathname);
           return data;
         })
         .catch((error) => {
-          loaderPromiseCache.delete(routePath);
-          console.error(`Failed to load loader data for ${routePath}:`, error);
-          throw new Error(`Failed to load loader data for route: ${routePath}`, { cause: error });
+          loaderPromiseCache.delete(pathname);
+          console.error(`Failed to load loader data for route: ${pathname}:`, error);
+          throw new Error(`Failed to load loader data for route: ${pathname}`, { cause: error });
         });
 
-      loaderPromiseCache.set(routePath, promise);
+      loaderPromiseCache.set(pathname, promise);
     }
 
-    return React.use(loaderPromiseCache.get(routePath)!);
+    return React.use(loaderPromiseCache.get(pathname)!);
   }
 
   throw new Error(

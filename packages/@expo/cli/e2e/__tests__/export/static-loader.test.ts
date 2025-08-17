@@ -104,6 +104,8 @@ describe('static loader', () => {
     expect(files).toContain('_expo/loaders/index.js');
     expect(files).toContain('_expo/loaders/posts/static-post-1.js');
     expect(files).toContain('_expo/loaders/posts/static-post-2.js');
+    // Should also generate loader module for dynamic route template
+    expect(files).toContain('_expo/loaders/posts/[postId].js');
   });
 
   it('loader modules contain only JSON data without server code', async () => {
@@ -120,5 +122,20 @@ describe('static loader', () => {
     expect(moduleContent).not.toContain('await');
     expect(moduleContent).not.toContain('require');
     expect(moduleContent).not.toContain('process.env');
+  });
+
+  it('generates fallback loader module for dynamic route template', async () => {
+    const fs = require('fs');
+    const dynamicLoaderPath = path.join(projectRoot, outputName, '_expo/loaders/posts/[postId].js');
+    const moduleContent = fs.readFileSync(dynamicLoaderPath, 'utf-8');
+
+    expect(moduleContent).toMatch(/^export default /);
+    // Should contain bracket notation in the params
+    expect(moduleContent).toContain('"postId":"[postId]"');
+
+    // Should not contain server code
+    expect(moduleContent).not.toContain('function');
+    expect(moduleContent).not.toContain('async');
+    expect(moduleContent).not.toContain('await');
   });
 });

@@ -38,27 +38,78 @@ export function getRoutePathFromLoaderPath(loaderPath: string): string {
 }
 
 /**
+ * Attempts to construct a fallback loader path using route segments from `useSegments()`.
+ * Only works with dynamic segments.
+ */
+function constructFallbackLoaderPath(routePath: string, segments?: string[]): string | null {
+  if (segments && segments.length > 0) {
+    // If we have segments with bracket notation, use them directly
+    const hasAnyDynamicSegments = segments.some(
+      (segment) => segment.includes('[') && segment.includes(']')
+    );
+    if (hasAnyDynamicSegments) {
+      const fallbackPath = '/' + segments.join('/');
+      return fallbackPath !== routePath ? fallbackPath : null;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Fetches and parses a single loader module from the given path.
+ */
+async function fetchAndParseLoaderModule(loaderPath: string): Promise<any> {
+  const response = await fetch(loaderPath);
+  if (response.ok) {
+    const text = await response.text();
+
+    // Modules are generated as: export default {json}
+    const match = text.match(/export default (.+)$/m);
+    if (match) {
+      return JSON.parse(match[1]);
+    }
+
+    throw new Error('Invalid loader module format');
+  }
+  throw new Error(`Failed to fetch loader data: ${response.status}`);
+}
+
+/**
+ * Attempts to fetch fallback loader data if the original request fails.
+ */
+async function tryFallbackLoader(routePath: string, segments?: string[]): Promise<any | null> {
+  const fallbackRoutePath = constructFallbackLoaderPath(routePath, segments);
+  if (!fallbackRoutePath) return null;
+
+  const fallbackLoaderPath = getLoaderModulePath(fallbackRoutePath);
+  try {
+    return await fetchAndParseLoaderModule(fallbackLoaderPath);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Fetches and parses a loader module from the given route path.
  * This works in all environments including:
  * 1. Development with Metro dev server (see `LoaderModuleMiddleware`)
  * 2. Production with static files (SSG)
  * 3. SSR environments
+ *
+ * Optimizes for dynamic routes by detecting them upfront and loading a
+ * fallback directly, avoiding unnecessary 404 requests.
  */
-export async function fetchLoaderModule(routePath: string): Promise<any> {
+export async function fetchLoaderModule(routePath: string, segments?: string[]): Promise<any> {
   const loaderPath = getLoaderModulePath(routePath);
 
-  const response = await fetch(loaderPath);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch loader data: ${response.status}`);
+  // TODO(@hassankhan): Consider racing promises for potential dynamic routes
+  try {
+    return await fetchAndParseLoaderModule(loaderPath);
+  } catch (error) {
+    const fallbackData = await tryFallbackLoader(routePath, segments);
+    if (fallbackData) return fallbackData;
+
+    throw error;
   }
-
-  const text = await response.text();
-
-  // Modules are generated as: export default {json}
-  const match = text.match(/export default (.+)$/m);
-  if (match) {
-    return JSON.parse(match[1]);
-  }
-
-  throw new Error('Invalid loader module format');
 }

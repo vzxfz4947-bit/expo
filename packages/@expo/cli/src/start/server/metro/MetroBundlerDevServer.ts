@@ -1553,7 +1553,7 @@ export class MetroBundlerDevServer extends BundlerDevServer {
 
       debug('Matched route loader: ', matchingRoute.loader, ' to file: ', matchingRoute.file);
 
-      // Extract route parameters
+      // TODO(@hassankhan): This should move to a util function
       const params: Record<string, string | string[]> = {};
       const match = matchingRoute.namedRegex.exec(location.pathname);
       if (match?.groups) {

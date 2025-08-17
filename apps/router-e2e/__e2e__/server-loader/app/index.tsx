@@ -1,5 +1,5 @@
 import { Text, View } from "react-native";
-import { Link, useLoader } from 'expo-router';
+import { Link, useLoader, useLocalSearchParams, usePathname, useSegments } from 'expo-router';
 
 export async function loader({ params }) {
   return Promise.resolve({
@@ -8,6 +8,9 @@ export async function loader({ params }) {
 }
 
 export default function Index() {
+  const pathname = usePathname();
+  const localParams = useLocalSearchParams();
+  const segments = useSegments();
   const data = useLoader(loader);
 
   return (
@@ -18,6 +21,9 @@ export default function Index() {
         alignItems: "center",
       }}
     >
+      <Text testID="pathname-result">{JSON.stringify(pathname)}</Text>
+      <Text testID="localparams-result">{JSON.stringify(localParams)}</Text>
+      <Text testID="segments-result">{JSON.stringify(segments)}</Text>
       <Text testID="loader-result">{JSON.stringify(data)}</Text>
 
       <Link href="/posts/static-post-1">

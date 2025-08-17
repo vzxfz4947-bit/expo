@@ -2,39 +2,46 @@ import { test, expect } from '@playwright/test';
 
 import { clearEnv, restoreEnv } from '../../__tests__/export/export-side-effects';
 import { getRouterE2ERoot } from '../../__tests__/utils';
-import { createExpoStart } from '../../utils/expo';
+import { createExpoServe, executeExpoAsync } from '../../utils/expo';
 import { pageCollectErrors } from '../page';
 
 test.beforeAll(() => clearEnv());
 test.afterAll(() => restoreEnv());
 
 const projectRoot = getRouterE2ERoot();
-const inputDir = 'server-loader';
+const outputDir = 'dist-static-loader';
 
-test.describe('server loader in development', () => {
-  const expoStart = createExpoStart({
+test.describe('static loader in production', () => {
+  const expoServe = createExpoServe({
     cwd: projectRoot,
     env: {
-      E2E_ROUTER_SRC: inputDir,
-      E2E_ROUTER_SERVER_LOADERS: 'true',
-
-      // Ensure CI is disabled otherwise the file watcher won't run.
-      CI: '0',
+      NODE_ENV: 'production',
     },
   });
 
   test.beforeEach(async () => {
-    console.time('expo start');
-    await expoStart.startAsync();
-    console.timeEnd('expo start');
+    console.time('expo export');
+    await executeExpoAsync(projectRoot, ['export', '-p', 'web', '--output-dir', outputDir], {
+      env: {
+        NODE_ENV: 'production',
+        EXPO_USE_STATIC: 'static',
+        E2E_ROUTER_SRC: 'server-loader',
+        E2E_ROUTER_SERVER_LOADERS: 'true',
+      },
+    });
+    console.timeEnd('expo export');
+
+    console.time('npx serve');
+    await expoServe.startAsync([outputDir]);
+    console.timeEnd('npx serve');
   });
   test.afterEach(async () => {
-    await expoStart.stopAsync();
+    await expoServe.stopAsync();
   });
 
   test('loader loads and renders data', async ({ page }) => {
     const pageErrors = pageCollectErrors(page);
-    await page.goto(expoStart.url.href);
+    await page.goto(expoServe.url.href);
 
     const loaderDataScript = await page.evaluate(() => {
       return window.__EXPO_ROUTER_LOADER_DATA__;
@@ -57,7 +64,7 @@ test.describe('server loader in development', () => {
       }
     });
 
-    await page.goto(expoStart.url.href);
+    await page.goto(expoServe.url.href);
     expect(loaderRequests).toHaveLength(0);
 
     await page.click('a[href="/posts/static-post-1"]');
@@ -78,7 +85,7 @@ test.describe('server loader in development', () => {
       }
     });
 
-    await page.goto(expoStart.url.href);
+    await page.goto(expoServe.url.href);
 
     await page.click('a[href="/posts/static-post-1"]');
     await page.waitForSelector('[data-testid="loader-result"]');
@@ -94,7 +101,7 @@ test.describe('server loader in development', () => {
   });
 
   test('handles loader module fetch errors gracefully', async ({ page }) => {
-    await page.goto(expoStart.url.href);
+    await page.goto(expoServe.url.href);
 
     await page.route('**/_expo/loaders/**', (route) => {
       route.abort('failed');
@@ -106,7 +113,9 @@ test.describe('server loader in development', () => {
   });
 
   test('shows suspense fallback while loading', async ({ page }) => {
-    await page.goto(expoStart.url.href);
+    // In production, `<SuspenseFallback>` returns null, but we can verify the Suspense boundary is
+    // working by checking that content is not rendered during loading
+    await page.goto(expoServe.url.href);
 
     await page.route('**/_expo/loaders/**', async (route) => {
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -115,11 +124,12 @@ test.describe('server loader in development', () => {
 
     await page.click('a[href="/posts/static-post-1"]');
 
-    const suspenseFallback = await page.locator('text=Bundling...');
-    await expect(suspenseFallback).toBeVisible();
+    const loaderResult = page.locator('[data-testid="loader-result"]');
 
-    await page.waitForSelector('[data-testid="loader-result"]');
-    await expect(suspenseFallback).not.toBeVisible();
+    // Content should not be visible immediately (component is suspended)
+    await expect(loaderResult).not.toBeVisible({ timeout: 100 });
+
+    await expect(loaderResult).toBeVisible({ timeout: 1000 });
   });
 
   test('handles navigation to dynamic routes not in generateStaticParams', async ({ page }) => {
@@ -132,38 +142,41 @@ test.describe('server loader in development', () => {
       }
     });
 
-    await page.goto(expoStart.url.href);
+    await page.goto(expoServe.url.href);
 
-    // Navigate to a dynamic route not pre-generated via generateStaticParams
     await page.click('a[href="/posts/dynamic-post-1"]');
     await page.waitForSelector('[data-testid="loader-result"]');
 
-    expect(pageErrors.all).toEqual([]);
+    // 404 error for dynamic-post-1.js is expected in static export
+    expect(pageErrors.all.length).toBeGreaterThan(0);
+    expect(pageErrors.all[0].text()).toContain('404');
 
+    // Should try to fetch the specific loader, then use fallback
     expect(loaderRequests).toContainEqual(
       expect.stringContaining('/_expo/loaders/posts/dynamic-post-1.js')
     );
+    expect(loaderRequests).toContainEqual(
+      expect.stringContaining('/_expo/loaders/posts/[postId].js')
+    );
 
     const loaderData = page.locator('[data-testid="loader-result"]');
-    await expect(loaderData).toContainText('"postId":"dynamic-post-1"');
+    await expect(loaderData).toContainText('"postId":"[postId]"');
   });
 
   test('handles multiple dynamic routes with fallback', async ({ page }) => {
     const pageErrors = pageCollectErrors(page);
-
     const dynamicRoutes = ['/posts/dynamic-post-1', '/posts/dynamic-post-2'];
 
     for (const route of dynamicRoutes) {
-      await page.goto(expoStart.url.href);
+      await page.goto(expoServe.url.href);
       await page.click(`a[href="${route}"]`);
       await page.waitForSelector('[data-testid="loader-result"]');
 
       const loaderData = page.locator('[data-testid="loader-result"]');
-      const expectedPostId = route.split('/').pop();
-      await expect(loaderData).toContainText(`"postId":"${expectedPostId}"`);
+      await expect(loaderData).toContainText('"postId":"[postId]"');
     }
 
-    // Should not have any errors across all navigations
-    expect(pageErrors.all).toEqual([]);
+    expect(pageErrors.all.length).toBeGreaterThan(0);
+    expect(pageErrors.all[0].text()).toContain('404');
   });
 });
